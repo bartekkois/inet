@@ -5,3 +5,9 @@
 
 ## Documentation
 Documentation is availble at http://wiki.inet.one.pl/i.net_scripts
+
+## Support
+Support forum: http://forum.inet.one.pl/
+
+## Commercial support
+Fully featured commercial scripts are also availble through: http://www.inet.one.pl/
