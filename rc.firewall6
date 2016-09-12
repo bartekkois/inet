@@ -1,0 +1,51 @@
+#!/bin/bash
+# ------------- Firewall "rc.firewall6" -------------
+#    All rights reserved for B@roo 2000-2011
+# ---------------------------------------------------
+#set -x
+
+VERSION="2.9.9v"
+
+function clean() {
+    # Tables flushing
+      ip6tables -F
+      ip6tables -X
+      ip6tables -Z
+      ip6tables -F -t mangle
+      ip6tables -X -t mangle
+
+    # Policy changing
+      ip6tables -P INPUT DROP
+      ip6tables -P OUTPUT DROP
+      ip6tables -P FORWARD DROP
+}
+
+# ---------------- Disabling firewall -----------------
+function clean_off() {
+    # Tables flushing
+      ip6tables -F
+      ip6tables -X
+      ip6tables -Z
+      ip6tables -F -t mangle
+      ip6tables -X -t mangle
+
+    # Policy changing
+      ip6tables -P FORWARD ACCEPT
+      ip6tables -P INPUT ACCEPT
+      ip6tables -P OUTPUT ACCEPT
+}
+
+# ------------- { start | stop | temp } ---------------
+case "$1" in
+    'start')
+	echo "Starting Firewall6 $VERSION ... - All rights reserved for B@roo 2000-2011"
+	clean
+	;;
+    'stop')
+	echo "Stopping Firewall6 $VERSION ... - All rights reserved for B@roo 2000-2011"
+	clean_off
+	;;
+    *)
+	echo -e "\n Usage: rc.firewall { start | stop | temp }"
+	;;
+esac

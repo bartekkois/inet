@@ -1,0 +1,21 @@
+# ----------------------------------------
+#               rc.fire_qos
+# ----------------------------------------
+# (ip_address;down_rate;down_ceil;up_rate;up_ceil)
+#
+10.0.1.2;auto;auto;auto;auto
+10.0.1.5;auto;auto;auto;auto
+10.0.1.9;auto;auto;auto;auto
+10.0.1.20;auto;auto;auto;auto
+10.0.1.21;auto;auto;auto;auto
+10.0.1.21;auto;auto;auto;auto
+10.0.1.23;auto;auto;auto;auto
+10.0.1.24;auto;auto;auto;auto
+10.0.1.25;auto;auto;auto;auto
+10.0.1.100;auto;auto;auto;auto
+10.0.1.101;auto;auto;auto;auto
+10.0.1.102;auto;auto;auto;auto
+10.0.1.103;auto;auto;auto;auto
+10.0.1.104;auto;auto;auto;auto
+10.0.1.105;auto;auto;auto;auto
+10.0.2.0/24;auto;auto;auto;auto

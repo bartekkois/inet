@@ -1,0 +1,11 @@
+# ----------------------------------------
+#               rc.fire_fast
+# ----------------------------------------
+# (pattern;protocol;source_ip;sport;dest_ip;dport:class (port eg.: 22-25,80))
+#
+ssh;all;all;all;83.18.49.158;all;data
+all;tcp;all;all;83.18.49.158;443;data
+ssh;all;10.0.1.0/24;all;all;all;fast
+skypetoskype;all;all;all;all;all;fast
+sip;all;all;all;all;all;fast
+rtp;all;all;all;all;all;fast

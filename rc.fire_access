@@ -1,0 +1,13 @@
+# ----------------------------------------
+#               rc.fire_access
+# ----------------------------------------
+# (pattern;protocol;dest_ip;dport;time;action (port eg.: 22-25,80))
+#
+#rule-10.0.1.20
+#all;all;all;all;11:00|18:00|Mon,Tue,Wed,Thu,Fri;pass
+#all;all;all;all;all;drop
+#
+# Block outgoing SMTP traffic
+#rule-10.0.1.20
+#all;tcp;all;25;all;drop
+#all;all;all;all;all;pass

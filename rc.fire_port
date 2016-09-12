@@ -1,0 +1,8 @@
+# ----------------------------------------
+#               rc.fire_port
+# ----------------------------------------
+# (protocol;external_port;local_ip;port;internel_port;allow_ip)
+#
+tcp;500;10.0.1.21;500;all
+udp;500;10.0.1.21;500;all
+#tcp;443;10.0.1.201;443;all

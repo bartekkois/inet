@@ -1,0 +1,625 @@
+#!/bin/bash
+# ------------- Firewall "rc.firewall" --------------
+#    All rights reserved for B@roo 2000-2011
+# ---------------------------------------------------
+#set -x
+
+VERSION="2.9.9v"
+
+# ------------------ Safe loading -------------------
+if [ "$1" = "temp" ]; then 
+    (sleep 60; iptables -P INPUT DROP; iptables -P OUTPUT DROP; iptables -P FORWARD DROP; iptables -F;\
+		iptables -A INPUT -p tcp --dport 60022 -j ACCEPT;\
+		iptables -A OUTPUT -p tcp --sport 60022 -j ACCEPT; ) &
+fi
+
+# ------ Tables flushing and policy changing --------
+# Configuration loading
+if [ ! -e ${0%rc.firewall}rc.fire_conf ]; then
+    exit 1
+fi
+    START_FILE="rc.firewall"
+    source ${0%rc.firewall}rc.fire_conf
+
+function clean() {
+    # Tables flushing
+      iptables -F
+      iptables -X
+      iptables -Z
+      iptables -F -t nat
+      iptables -X -t nat
+      iptables -F -t mangle
+      iptables -X -t mangle
+
+    # Policy changing
+      iptables -P INPUT DROP
+      iptables -P OUTPUT DROP
+      iptables -P FORWARD DROP
+}
+
+# -------------------- Security ---------------------
+function secure() {
+    # Enable rp_filter mechanism
+      echo "1" >/proc/sys/net/ipv4/conf/all/rp_filter
+
+    # Enable protection against Smurf attacks
+      echo "1" > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts
+
+    # Drop "source route" packets
+      echo "0" > /proc/sys/net/ipv4/conf/all/accept_source_route
+
+    # Drop ICMP rediect packets that can change routing table
+      echo "0" > /proc/sys/net/ipv4/conf/all/accept_redirects
+
+    # Enable protection against wrong ICMP packets
+      echo "1" > /proc/sys/net/ipv4/icmp_ignore_bogus_error_responses
+
+    # Enable loging of bad packets (spoofed, source routed, redirects)
+      echo "1" > /proc/sys/net/ipv4/conf/all/log_martians
+
+    # Limiting TCP session
+      echo "30" > /proc/sys/net/ipv4/tcp_fin_timeout
+      echo "2400" > /proc/sys/net/ipv4/tcp_keepalive_time
+      echo "0" > /proc/sys/net/ipv4/tcp_window_scaling
+      echo "0" > /proc/sys/net/ipv4/tcp_sack
+      echo "20480" > /proc/sys/net/ipv4/netfilter/ip_conntrack_max
+      echo "20" > /proc/sys/net/ipv4/ipfrag_time
+      echo "1280" > /proc/sys/net/ipv4/tcp_max_syn_backlog
+      echo "43200" > /proc/sys/net/ipv4/netfilter/ip_conntrack_tcp_timeout_established 
+      echo "60" > /proc/sys/net/ipv4/netfilter/ip_conntrack_tcp_timeout_close_wait
+
+    # TCP timestamps protection
+      echo "1" > /proc/sys/net/ipv4/tcp_timestamps
+
+    # Ignore redirected packets	
+      echo "0" > /proc/sys/net/ipv4/conf/all/send_redirects
+
+    # Enabling packet forwarding
+      echo "1" > /proc/sys/net/ipv4/ip_forward
+
+    if [ "$NAT_ENABLE" == "MASQUERADE" ]; then
+      INTERNET_IP=`ifconfig $INTERNET_ETH | grep "inet addr:" | awk '{print $2}' | cut -d ":" -f 2`
+    fi
+
+    # Hate hosts blocking
+     for i in $HATEHOSTS
+      do
+	iptables -A INPUT -s $i -j DROP
+	iptables -A OUTPUT -d $i -j DROP
+	iptables -A FORWARD -s $i -j DROP
+      done
+
+    # BOGON traffic filtering
+     if [ ! "$BOGON_FILTERING" == "" ]; then
+	BOGON_NETWORKS="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 224.0.0.0/3"
+
+	for i in $BOGON_NETWORKS
+	do
+	  iptables -A INPUT -i $INTERNET_ETH -s $i -j DROP
+	  iptables -A OUTPUT -o $INTERNET_ETH -d $i -j DROP
+	  iptables -A FORWARD -i $INTERNET_ETH -s $i -j DROP
+	  iptables -A FORWARD -o $INTERNET_ETH -d $i -j DROP
+        done
+      fi
+
+    # Viruses filtering
+     HPORTS="135;tcp 137;udp 138;udp 139;udp 137;tcp 138;tcp 139;tcp 445;tcp"
+
+     if [ "$HATEPORTS" == "yes" ]; then
+      for i in $HPORTS
+      do
+      PORT=`echo $i | cut -d';' -f1`
+      PROTO=`echo $i | cut -d';' -f2`
+
+	iptables -A FORWARD -i $INTERNET_ETH -p $PROTO --dport $PORT -j DROP
+        iptables -A FORWARD -o $INTERNET_ETH -p $PROTO --dport $PORT -j DROP
+      done
+     fi
+
+    # SPAM check
+     if [ ! "$SPAM_CHECK" == "" ];  then
+      modprobe ipt_recent ip_list_tot=256
+      iptables -N SPAM_CHECK
+
+      for i in $SPAM_CHECK
+      do
+	iptables -A FORWARD -o $INTERNET_ETH -p tcp --dport 25 -s $i -m state --state NEW -j SPAM_CHECK
+      done
+
+      iptables -A SPAM_CHECK -m recent --set --name SMTP
+      iptables -A SPAM_CHECK -m recent --update --seconds $SPAM_CHECK_TIME --hitcount $SPAM_CHECK_HITCOUNT --name SMTP -j LOG --log-level info --log-prefix "SPAM detected: "
+      iptables -A SPAM_CHECK -m recent --update --seconds $SPAM_CHECK_TIME --hitcount $SPAM_CHECK_HITCOUNT --name SMTP -j DROP
+     fi
+
+    # MAC protection
+     if [ ! "$MAC_PROTECT" == "" ]; then
+      for i in `cat ${0%$START_FILE}rc.fire_mac | cut -d'#' -f1`
+      do
+        if [ ! `echo $i | grep eth` == "" ] || [ ! `echo $i | grep wlan` == "" ] || [ ! `echo $i | grep wifi` == "" ]; then
+	    INTERFACE=`echo $i`
+	    iptables -N mac-protect-${INTERFACE}
+	    if [ "$MAC_PROTECT" == "yes" ]; then
+		iptables -A INPUT -i $INTERFACE -j mac-protect-${INTERFACE}
+	    fi
+	    iptables -A FORWARD -i $INTERFACE -j mac-protect-${INTERFACE}
+	    iptables -A mac-protect-${INTERFACE} -j DROP
+	else
+	    IP=`echo $i | cut -d'-' -f1`
+	    MAC=`echo $i | cut -d'-' -f2`
+
+	    iptables -I mac-protect-${INTERFACE} 1 -s $IP -m mac --mac-source $MAC -j RETURN
+	fi
+      done
+     fi
+
+    # Block NEW ceonnections without syn flag
+      iptables -A INPUT -p tcp ! --syn -m state --state NEW -j DROP
+      iptables -A FORWARD -p tcp ! --syn -m state --state NEW -j DROP
+
+    # Drop fragmented packets
+      iptables -A INPUT -f -j DROP
+      iptables -A FORWARD -f -j DROP
+
+    # Drop connections in INVALID state
+      iptables -A INPUT -m state --state INVALID -j DROP
+      iptables -A FORWARD -m state --state INVALID -j DROP
+
+    # P2P traffic blocking
+      if [ ! "$P2P_DENY" == "" ]; then
+	iptables -N p2p-blocker
+
+	for i in $P2P_DENY
+	do
+	    iptables -A FORWARD -o $INTERNET_ETH -s $i -j p2p-blocker
+	    iptables -A FORWARD -i $INTERNET_ETH -d $i -j p2p-blocker
+	done
+
+        for i in $P2P_PROTOCOLS_DENY
+        do
+	    iptables -A p2p-blocker -m layer7 --l7proto $i -j DROP
+	done
+      fi
+
+    # Internet traffic loging
+      iptables -N traffic-logger
+      for i in $LOGS
+      do
+	iptables -A FORWARD -o $INTERNET_ETH -s $i -j traffic-logger
+      done
+
+      iptables -A traffic-logger -m state --state NEW -j ULOG --ulog-prefix traffic_logs
+
+    # Internet traffic accounting
+     for i in $NAT_COUNTER_ACCOUNT
+      do
+	NAME=`echo $i | cut -d';' -f1`
+	ADDR=`echo $i | cut -d';' -f2`
+	
+	iptables -A FORWARD -j ACCOUNT --addr $ADDR --tname $NAME
+      done
+}
+
+# -------------------- SSH access  --------------------
+function service() {
+    iptables -A INPUT -p tcp --dport 60022 -j ACCEPT
+    iptables -A OUTPUT -p tcp --sport 60022 -j ACCEPT
+}
+	
+# ---------------  Dostep do serwera  -----------------
+function access() {
+    # Loopback interface
+      iptables -A INPUT -i lo -j ACCEPT
+      iptables -A OUTPUT -o lo -j ACCEPT
+
+    # Outgoing traffic
+      iptables -A OUTPUT -j ACCEPT
+
+    # DHCP access
+     for i in $DHCP_ALLOW
+      do
+	iptables -A INPUT -i $i -s 0.0.0.0 -d 255.255.255.255 -p udp --dport 67 -j ACCEPT
+      done
+
+    # Local access
+     for i in `cat ${0%$START_FILE}rc.fire_local | cut -d'#' -f1`
+      do
+        INT=`echo $i | cut -d';' -f1`
+        IP=`echo $i | cut -d';' -f2`
+	PROTOCOL=`echo $i | cut -d';' -f3`
+	PORT=`echo $i | cut -d';' -f4`
+
+        if [ ! "$PORT" == "all" ]; then
+	    PORT_IN="--dport $PORT"
+	else
+	    PORT_IN=""
+	fi
+	
+	if [ "$PROTOCOL" == "all" ]; then
+	    iptables -A INPUT -i $INT -s $IP -j ACCEPT
+	else
+	    iptables -A INPUT -i $INT -s $IP -p $PROTOCOL $PORT_IN -j ACCEPT
+	fi
+       done
+
+    # Internet access
+     for i in `cat ${0%$START_FILE}rc.fire_access | cut -d'#' -f1`
+	do
+            if [ ! `echo $i | grep rule` == "" ] ; then
+        	ADDRESS=`echo $i | cut -d'-' -f2`
+        	iptables -N internet-access-${ADDRESS}
+    		iptables -A FORWARD -o $INTERNET_ETH -s $ADDRESS -j internet-access-${ADDRESS}
+    	    else
+		PATTERN=`echo $i | cut -d';' -f1`
+	        PROTOCOL=`echo $i | cut -d';' -f2`
+		DEST_IP=`echo $i | cut -d';' -f3`
+		DPORT=`echo $i | cut -d';' -f4`
+                TIME=`echo $i | cut -d';' -f5`
+                ACTION=`echo $i | cut -d';' -f6`
+
+                if [ ! "$PATTERN" == "all" ]; then P1="-m layer7 --l7proto $PATTERN"
+		else P1=""
+		fi
+		if [ ! "$PROTOCOL" == "all" ]; then P2="-p $PROTOCOL"
+		else P2=""
+		fi
+		if [ ! "$DEST_IP" == "all" ]; then P3="-d $DEST_IP"
+		else P3=""
+		fi
+		if [ ! "$DPORT" == "all" ]; then P4="-m multiport --dport $DPORT"
+		else P4=""
+		fi
+                if [ ! "$TIME" == "all" ]; then
+                    T_START=`echo $TIME | cut -d'|' -f1`
+                    T_STOP=`echo $TIME | cut -d'|' -f2`
+                    D_WEEK=`echo $TIME | cut -d'|' -f3`
+                    P5="-m time --timestart $T_START --timestop $T_STOP --weekdays $D_WEEK"
+                else P5=""
+                fi
+
+		if [ "$ACTION" == "pass" ]; then 
+		    iptables -A internet-access-${ADDRESS} $P1 $P2 $P3 $P4 $P5 -j RETURN
+		else
+		    iptables -A internet-access-${ADDRESS} $P1 $P2 $P3 $P4 $P5 -j DROP
+		fi
+    	    fi
+	done
+
+    # Traffic forwarding between local subnets
+     for i in $BASIC_FORWARD
+      do
+	NET1=`echo $i | cut -d';' -f1`
+	NET2=`echo $i | cut -d';' -f2`
+
+	iptables -A FORWARD -s $NET1 -d $NET2 -j ACCEPT
+	iptables -A FORWARD -s $NET2 -d $NET1 -j ACCEPT
+      done
+
+    # Router traffic (incoming)
+     for i in `cat ${0%$START_FILE}rc.fire_service | cut -d'#' -f1`
+      do
+	PROTOCOL=`echo $i | cut -d';' -f1`
+	PORT=`echo $i | cut -d';' -f2`
+	IP=`echo $i | cut -d';' -f3`
+
+	 if [ ! "$PORT" == "all" ]; then
+	   PORT_IN="--dport $PORT"
+	  else
+	   PORT_IN=""
+	  fi
+	  
+         if [ ! "$IP" == "all" ]; then
+	   IP_IN="-s $IP"
+	  else
+	   IP_IN=""
+	  fi
+
+	iptables -A INPUT -p $PROTOCOL $IP_IN $PORT_IN -j ACCEPT
+      done
+
+    # Port forwarding
+     for i in `cat ${0%$START_FILE}rc.fire_port | cut -d'#' -f1`
+      do
+        PROTOCOL=`echo $i | cut -d';' -f1`
+	PORT_IN=`echo $i | cut -d';' -f2`
+	LOCAL_IP=`echo $i | cut -d';' -f3`
+	PORT_OUT=`echo $i | cut -d';' -f4`
+	SECURE=`echo $i | cut -d';' -f5`
+	if [ ! "$SECURE" == "all" ]; then
+	    SECURITY="-s $SECURE"
+	else
+	    SECURITY=""
+	fi
+
+	iptables -A FORWARD -i $INTERNET_ETH -p $PROTOCOL $SECURITY --dport $PORT_OUT -d $LOCAL_IP -j ACCEPT
+	iptables -t nat -A PREROUTING -p $PROTOCOL -d $INTERNET_IP --dport $PORT_IN -j DNAT --to $LOCAL_IP:$PORT_OUT
+      done
+
+    # IPSEC pass-through
+     for i in `cat ${0%$START_FILE}rc.fire_ipsec | cut -d'#' -f1`
+     do
+      TUNNEL_ENDPOINT=`echo $i | cut -d';' -f1`
+      LOCAL_IP=`echo $i | cut -d';' -f2`
+
+      iptables -A FORWARD -p udp --dport 500 -s $TUNNEL_ENDPOINT -d $LOCAL_IP -j ACCEPT
+      iptables -A FORWARD -p udp --dport 4500 -s $TUNNEL_ENDPOINT -d $LOCAL_IP -j ACCEPT
+      iptables -A FORWARD -p 50 -s $TUNNEL_ENDPOINT -d $LOCAL_IP -j ACCEPT
+      iptables -A FORWARD -p 50 -s $LOCAL_IP -d $TUNNEL_ENDPOINT -j ACCEPT
+      iptables -A FORWARD -p 51 -s $TUNNEL_ENDPOINT -d $LOCAL_IP -j ACCEPT
+      iptables -A FORWARD -p 51 -s $LOCAL_IP -d $TUNNEL_ENDPOINT -j ACCEPT
+
+      iptables -t nat -A PREROUTING -p udp --dport 500 -s $TUNNEL_ENDPOINT -d $INTERNET_IP -j DNAT --to $LOCAL_IP:500
+      iptables -t nat -A PREROUTING -p udp --dport 4500 -s $TUNNEL_ENDPOINT -d $INTERNET_IP -j DNAT --to $LOCAL_IP:4500
+      iptables -t nat -A PREROUTING -p 50 -s $TUNNEL_ENDPOINT -d $INTERNET_IP -j DNAT --to $LOCAL_IP
+      iptables -t nat -A POSTROUTING -p 50 -s $LOCAL_IP -d $TUNNEL_ENDPOINT -j SNAT --to $INTERNET_IP
+      iptables -t nat -A PREROUTING -p 51 -s $TUNNEL_ENDPOINT -d $INTERNET_IP -j DNAT --to $LOCAL_IP
+      iptables -t nat -A POSTROUTING -p 51 -s $LOCAL_IP -d $TUNNEL_ENDPOINT -j SNAT --to $INTERNET_IP
+     done
+
+    # IP forwarding
+     for i in `cat ${0%$START_FILE}rc.fire_ip | cut -d'#' -f1`
+      do
+        EXT_IP=`echo $i | cut -d';' -f1`
+        MAX_CONN=`echo $i | cut -d';' -f2`
+
+	if [ ! "$MAX_CONN" == "none" ]; then
+	  iptables -A FORWARD -o $INTERNET_ETH ! -i $INTERNET_ETH -s $EXT_IP -p tcp --syn -m connlimit --connlimit-above $MAX_CONN -j REJECT
+	  iptables -A FORWARD -i $INTERNET_ETH ! -o $INTERNET_ETH -d $EXT_IP -p tcp --syn -m connlimit --connlimit-above $MAX_CONN -j REJECT
+	fi
+
+        iptables -A FORWARD -o $INTERNET_ETH ! -i $INTERNET_ETH -s $EXT_IP -j ACCEPT
+        iptables -A FORWARD -i $INTERNET_ETH ! -o $INTERNET_ETH -d $EXT_IP -j ACCEPT
+      done
+
+    # ICMP
+      iptables -A INPUT -p icmp -j ACCEPT
+
+    # Established connections
+      iptables -A INPUT -p tcp -j ACCEPT -m state --state ESTABLISHED,RELATED
+      iptables -A INPUT -p udp -j ACCEPT -m state --state ESTABLISHED
+      iptables -A INPUT -p icmp -j ACCEPT -m state --state ESTABLISHED,RELATED
+      iptables -A INPUT -p gre -j ACCEPT -m state --state ESTABLISHED,RELATED
+      iptables -A FORWARD -p tcp -j ACCEPT -m state --state ESTABLISHED,RELATED
+      iptables -A FORWARD -p udp -j ACCEPT -m state --state ESTABLISHED
+      iptables -A FORWARD -p icmp -j ACCEPT -m state --state ESTABLISHED,RELATED
+      iptables -A FORWARD -p gre -j ACCEPT -m state --state ESTABLISHED,RELATED
+
+    # Return "tcp-reset" and "icmp-port-unreachable"
+      iptables -A INPUT -p tcp -i $INTERNET_ETH -j REJECT --reject-with tcp-reset
+      iptables -A INPUT -p udp -i $INTERNET_ETH -j REJECT --reject-with icmp-port-unreachable
+}
+
+# --------------- Internet sharing -----------------
+function nat() {
+    # Modules loading (for FTP and IRC)
+      modprobe ip_nat_ftp
+      modprobe ip_nat_irc
+      modprobe ip_nat_pptp
+      modprobe ip_conntrack_ftp
+      modprobe ip_conntrack_irc
+      modprobe ip_conntrack_pptp
+
+    # Proxy - transparent
+     if [ ! "$PROXY_IP" == "" ]; then
+      IP=`echo $PROXY_IP | cut -d';' -f1`
+      PORT=`echo $PROXY_IP | cut -d';' -f2`
+
+      if [ "$IP" == "REDIRECT" ]; then
+	for i in `cat ${0%$START_FILE}rc.fire_proxy | cut -d'#' -f1`
+	do
+	 CLIENT=`echo $i | cut -d';' -f1`
+	 
+	 iptables -t nat -A PREROUTING -p tcp -s $CLIENT -d 0/0 --dport 80 -j REDIRECT --to-port $PORT
+	done
+      else
+        for i in `cat ${0%$START_FILE}rc.fire_proxy | cut -d'#' -f1`
+        do
+	 CLIENT=`echo $i | cut -d';' -f1`
+	 GATEWAY=`echo $i | cut -d';' -f2`
+	 
+	 iptables -t nat -A PREROUTING -s $CLIENT -d 0/0 -p tcp --dport 80 -j DNAT --to ${IP}:${PORT}
+	 iptables -t nat -A POSTROUTING -s $CLIENT -d $IP -j SNAT --to $GATEWAY
+        done
+       fi
+      fi
+
+    # Spam relay (smtp gated)
+     if [ ! "$SPAM_RELAY" == "" ]; then
+        for i in $SPAM_RELAY
+	do
+	    SRC=`echo $i | cut -d';' -f1`
+	    DST_IP=`echo $i | cut -d';' -f2`
+	    DST_PORT=`echo $i | cut -d';' -f3`
+
+	    iptables -t nat -A PREROUTING -p tcp --dport 25 -s $SRC -j DNAT --to $DST_IP:$DST_PORT
+	done
+     fi
+
+    # Redirect
+     for i in $REDIRECT
+     do
+      SOURCE=`echo $i | cut -d';' -f1`
+      REQ_IP=`echo $i | cut -d';' -f2`
+      DST_IP=`echo $i | cut -d';' -f3`
+      PORT=`echo $i | cut -d';' -f4`
+      PROTO=`echo $i | cut -d';' -f5`
+
+      if [ "$PORT" == "all" ]; then
+	if [ "$DST_IP" == "REDIRECT" ]; then
+	 TARGET="-j REDIRECT"
+	else
+	 TARGET="-j DNAT --to ${DST_IP}"
+	fi
+	iptables -t nat -A PREROUTING -s $SOURCE -d $REQ_IP $TARGET
+      else
+        if [ "$DST_IP" == "REDIRECT" ]; then
+	 TARGET="-j REDIRECT --to-port $PORT"
+	else
+	 TARGET="-j DNAT --to ${DST_IP}:${PORT}"
+	fi				  
+	iptables -t nat -A PREROUTING -p $PROTO -s $SOURCE -d $REQ_IP --dport $PORT $TARGET
+      fi
+     done
+
+    # Internet access
+     if [ ! "$NAT_ENABLE" == "" ]; then
+	if [ "$NAT_ENABLE" == "yes" ]; then
+	 for i in `cat ${0%$START_FILE}rc.fire_nat | cut -d'#' -f1`
+	  do
+	    CLIENT=`echo $i | cut -d';' -f1`
+	    MAX_CONN=`echo $i | cut -d';' -f2`
+	    
+	    if [ ! "$MAX_CONN" == "none" ]; then
+		iptables -A FORWARD -o $INTERNET_ETH -s $CLIENT ! -i $INTERNET_ETH -p tcp --syn -m connlimit --connlimit-above $MAX_CONN -j REJECT
+	    fi
+
+	    iptables -A FORWARD -o $INTERNET_ETH -s $CLIENT ! -i $INTERNET_ETH -j ACCEPT
+	    iptables -t nat -A POSTROUTING -o $INTERNET_ETH -s $CLIENT -j SNAT --to $INTERNET_IP
+	  done
+	else
+	 for i in `cat ${0%$START_FILE}rc.fire_nat | cut -d'#' -f1`
+	  do
+            CLIENT=`echo $i | cut -d';' -f1`
+            MAX_CONN=`echo $i | cut -d';' -f2`
+	    
+	    if [ ! "$MAX_CONN" == "none" ]; then
+		iptables -A FORWARD -o $INTERNET_ETH -s $CLIENT ! -i $INTERNET_ETH -p tcp --syn -m connlimit --connlimit-above $MAX_CONN -j REJECT
+	    fi
+
+	    iptables -A FORWARD -o $INTERNET_ETH -s $CLIENT ! -i $INTERNET_ETH -j ACCEPT
+	    iptables -t nat -A POSTROUTING -o $INTERNET_ETH -s $CLIENT -j MASQUERADE
+	  done
+	fi
+     fi
+}
+
+# ---------------------- QoS ------------------------
+function qos() {
+
+    # TTL setting
+     for i in $TTL_CHANGE
+      do
+       IP=`echo $i | cut -d';' -f1`
+       TTL=`echo $i | cut -d';' -f2`
+
+       iptables -t mangle -A OUTPUT -d $IP -j TTL --ttl-set $TTL
+       iptables -t mangle -A FORWARD -d $IP -j TTL --ttl-set $TTL
+      done
+
+    # TOS bits setting
+      iptables -t mangle -A PREROUTING -p tcp --dport 20 -j TOS --set-tos 8
+      iptables -t mangle -A PREROUTING -p tcp --dport 21 -j TOS --set-tos 8
+      iptables -t mangle -A PREROUTING -p tcp --dport 22 -j TOS --set-tos 16
+      iptables -t mangle -A PREROUTING -p tcp --dport 23 -j TOS --set-tos 16
+      iptables -t mangle -A PREROUTING -p tcp --dport 25 -j TOS --set-tos 8
+      iptables -t mangle -A PREROUTING -p tcp --dport 53 -j TOS --set-tos 16
+      iptables -t mangle -A PREROUTING -p udp --dport 53 -j TOS --set-tos 16
+      iptables -t mangle -A PREROUTING -p tcp --dport 80 -j TOS --set-tos 8
+
+      iptables -t mangle -A OUTPUT -p tcp --dport 20 -j TOS --set-tos 8
+      iptables -t mangle -A OUTPUT -p tcp --dport 21 -j TOS --set-tos 8
+      iptables -t mangle -A OUTPUT -p tcp --dport 22 -j TOS --set-tos 16
+      iptables -t mangle -A OUTPUT -p tcp --dport 23 -j TOS --set-tos 16
+      iptables -t mangle -A OUTPUT -p tcp --dport 25 -j TOS --set-tos 8
+      iptables -t mangle -A OUTPUT -p tcp --dport 53 -j TOS --set-tos 16
+      iptables -t mangle -A OUTPUT -p udp --dport 53 -j TOS --set-tos 16
+      iptables -t mangle -A OUTPUT -p tcp --dport 80 -j TOS --set-tos 8	
+
+    # IMQ - queues
+      # Download
+        iptables -t mangle -A PREROUTING -i $INTERNET_ETH -j IMQ --todev 0
+
+      # Upload
+        iptables -t mangle -A POSTROUTING -o $INTERNET_ETH -j IMQ --todev 1
+
+    # IMQ - marking
+      iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark
+
+      # P2P traffic
+	if [ ! "$P2P_BAND" == "" ]; then
+	    for i in $P2P_PROTOCOLS_BAND
+	    do
+            	iptables -t mangle -A PREROUTING -m layer7 --l7proto $i -j MARK --set-mark 0x30
+	    done
+
+            iptables -t mangle -A PREROUTING -m mark --mark 0x30 -j CONNMARK --save-mark
+            iptables -t mangle -A POSTROUTING -m mark --mark 0x30 -j RETURN
+	fi
+
+      # Critical traffic - fast
+	for i in `cat ${0%$START_FILE}rc.fire_fast | cut -d'#' -f1`
+	 do
+	    PATTERN=`echo $i | cut -d';' -f1`
+	    PROTOCOL=`echo $i | cut -d';' -f2`
+            SOURCE_IP=`echo $i | cut -d';' -f3`
+            SPORT=`echo $i | cut -d';' -f4`
+            DEST_IP=`echo $i | cut -d';' -f5`
+            DPORT=`echo $i | cut -d';' -f6`
+	    CLASS=`echo $i | cut -d';' -f7`
+
+	    if [ ! "$PATTERN" == "all" ]; then P1="-m layer7 --l7proto $PATTERN"
+	    else P1=""
+	    fi
+            if [ ! "$PROTOCOL" == "all" ]; then P2="-p $PROTOCOL"
+            else P2=""
+            fi
+            if [ ! "$SOURCE_IP" == "all" ]; then P3="-s $SOURCE_IP"
+            else P3=""
+            fi
+            if [ ! "$SPORT" == "all" ]; then P4="-m multiport --sport $SPORT"
+            else P4=""
+            fi
+            if [ ! "$DEST_IP" == "all" ]; then P5="-d $DEST_IP"
+            else P5=""
+            fi
+            if [ ! "$DPORT" == "all" ]; then P6="-m multiport --dport $DPORT"
+            else P6=""
+            fi
+            if [ "$CLASS" == "fast" ]; then P7="-j MARK --set-mark 0x2"
+	    else P7="-j MARK --set-mark 0x3"
+	    fi
+
+	    iptables -t mangle -A PREROUTING $P1 $P2 $P3 $P4 $P5 $P6 $P7
+	done
+
+            iptables -t mangle -A PREROUTING -m mark --mark 0x2 -j CONNMARK --save-mark
+	    iptables -t mangle -A POSTROUTING -m mark --mark 0x2 -j RETURN
+            iptables -t mangle -A PREROUTING -m mark --mark 0x3 -j CONNMARK --save-mark
+            iptables -t mangle -A POSTROUTING -m mark --mark 0x3 -j RETURN
+}
+
+# ---------------- Disabling firewall -----------------
+function clean_off() {
+    # Tables flushing
+      iptables -F
+      iptables -X
+      iptables -Z
+      iptables -F -t nat
+      iptables -X -t nat
+      iptables -F -t mangle
+      iptables -X -t mangle
+
+    # Policy changing
+      iptables -P FORWARD ACCEPT
+      iptables -P INPUT ACCEPT
+      iptables -P OUTPUT ACCEPT
+}
+
+# ------------- { start | stop | temp } ---------------
+case "$1" in
+    'start')
+	echo "Starting Firewall $VERSION ... - All rights reserved for B@roo 2000-2011"
+	clean
+	secure
+	service
+	access
+        nat
+	qos
+	;;
+    'stop')
+	echo "Stopping Firewall $VERSION ... - All rights reserved for B@roo 2000-2011"
+	clean_off
+	;;
+    *)
+	echo -e "\n Usage: rc.firewall { start | stop | temp }"
+	;;
+esac

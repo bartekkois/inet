@@ -1,0 +1,288 @@
+#!/bin/bash
+# ----------------- HFSC sharper "rc.hfsc" ----------------
+#         All rights reserved for B@roo 2000-2011
+# ---------------------------------------------------------
+#set -x
+
+VERSION="2.9.9v"
+
+# Configuration loading
+  if [ ! -e ${0%rc.hfsc}rc.fire_conf ]; then
+    exit 1
+  fi
+    START_FILE="rc.hfsc"
+    source ${0%rc.hfsc}rc.fire_conf
+
+# ------------- Modules loading and flushing ---------------
+ip link set imq0 up
+ip link set imq1 up
+
+stop()
+{
+tc qdisc del root dev imq1 2> /dev/null
+tc qdisc del root dev imq0 2> /dev/null
+}
+
+# ------------- Queues speed calculation --------------------
+start()
+{
+    if [ "$NAT_ENABLE" == "MASQUERADE" ]; then
+	INTERNET_IP=`ifconfig $INTERNET_ETH | grep "inet addr:" | awk '{print $2}' | cut -d ":" -f 2`
+    fi
+
+    DOWNLOAD_ALL_UL=$[$DOWNLOAD*99/100]
+    DOWNLOAD_ALL=$[$DOWNLOAD*98/100]
+
+    DOWNLOAD_PRIO=`echo $QOS_PRIO_BAND | cut -d';' -f1`
+    DOWNLOAD_CRIT_FAST=`echo $QOS_CRIT_FAST_BAND | cut -d';' -f1`
+    DOWNLOAD_CRIT_DATA=`echo $QOS_CRIT_DATA_BAND | cut -d';' -f1`
+
+    DOWNLOAD_CRIT_FAST_UL=$DOWNLOAD_ALL_UL
+    DOWNLOAD_CRIT_DATA_UL=$DOWNLOAD_ALL_UL
+    DOWNLOAD_NORMAL=$[$DOWNLOAD_ALL-$DOWNLOAD_CRIT_FAST-$DOWNLOAD_CRIT_DATA]
+
+    DOWNLOAD_NORMAL_UL=$DOWNLOAD_ALL_UL
+    
+    if [ `echo $QOS_CRIT_FAST_BAND | cut -d';' -f3` == "hard" ]; then
+        DOWNLOAD_NORMAL_UL=$[$DOWNLOAD_NORMAL_UL-$DOWNLOAD_CRIT_FAST]
+    fi
+
+    if [ `echo $QOS_CRIT_DATA_BAND | cut -d';' -f3` == "hard" ]; then
+        DOWNLOAD_NORMAL_UL=$[$DOWNLOAD_NORMAL_UL-$DOWNLOAD_CRIT_DATA]
+    fi
+
+    if [ "$DOWNLOAD_CRIT_FAST" -ge "$[$DOWNLOAD_ALL/2]" ]; then
+	DOWNLOAD_CRIT_FAST_M1=$[$DOWNLOAD_ALL*75/100]
+    else
+	DOWNLOAD_CRIT_FAST_M1=$[2*$DOWNLOAD_CRIT_FAST*85/100]
+    fi
+    
+    UPLOAD_ALL_UL=$[$UPLOAD*99/100]
+    UPLOAD_ALL=$[$UPLOAD*98/100]
+
+    UPLOAD_PRIO=`echo $QOS_PRIO_BAND | cut -d';' -f2`
+    UPLOAD_CRIT_FAST=`echo $QOS_CRIT_FAST_BAND | cut -d';' -f2`
+    UPLOAD_CRIT_DATA=`echo $QOS_CRIT_DATA_BAND | cut -d';' -f2`
+
+    UPLOAD_CRIT_FAST_UL=$UPLOAD_ALL_UL
+    UPLOAD_CRIT_DATA_UL=$UPLOAD_ALL_UL
+    UPLOAD_NORMAL=$[$UPLOAD_ALL-$UPLOAD_CRIT_FAST-$UPLOAD_CRIT_DATA]
+
+    UPLOAD_NORMAL_UL=$UPLOAD_ALL_UL
+
+    if [ `echo $QOS_CRIT_FAST_BAND | cut -d';' -f3` == "hard" ]; then
+        UPLOAD_NORMAL_UL=$[$UPLOAD_NORMAL_UL-$UPLOAD_CRIT_FAST]
+    fi
+
+    if [ `echo $QOS_CRIT_DATA_BAND | cut -d';' -f3` == "hard" ]; then
+        UPLOAD_NORMAL_UL=$[$UPLOAD_NORMAL_UL-$UPLOAD_CRIT_DATA]
+    fi
+
+    if [ "$UPLOAD_CRIT_FAST" -ge "$[$UPLOAD_ALL/2]" ]; then
+        UPLOAD_CRIT_FAST_M1=$[$UPLOAD_ALL*75/100]
+    else
+        UPLOAD_CRIT_FAST_M1=$[2*$UPLOAD_CRIT_FAST*85/100]
+    fi
+
+    DOWNLOAD_ROUTER=`echo $QOS_ROUTER_BAND | cut -d';' -f1`
+    UPLOAD_ROUTER=`echo $QOS_ROUTER_BAND | cut -d';' -f3`
+
+    if [ ! `echo $QOS_ROUTER_BAND | cut -d';' -f2` == "auto" ]; then
+	DOWNLOAD_ROUTER_UL=`echo $QOS_ROUTER_BAND | cut -d';' -f2`
+    else
+	DOWNLOAD_ROUTER_UL=$DOWNLOAD_NORMAL_UL
+    fi
+
+    if [ ! `echo $QOS_ROUTER_BAND | cut -d';' -f4` == "auto" ]; then
+	UPLOAD_ROUTER_UL=`echo $QOS_ROUTER_BAND | cut -d';' -f4`
+    else
+	UPLOAD_ROUTER_UL=$UPLOAD_NORMAL_UL
+    fi
+
+    USERS_COUNT_DOWN=0
+    RATE_COUNT_DOWN=0
+    USERS_COUNT_UP=0
+    RATE_COUNT_UP=0
+
+    if [ ! "$P2P_BAND" == "" ]; then
+	USERS_COUNT_DOWN=1
+	USERS_COUNT_UP=1
+    fi
+
+    for i in `cat ${0%$START_FILE}rc.fire_qos | cut -d'#' -f1`
+     do
+	if [ ! `echo $i | cut -d';' -f2` == "auto" ]; then
+	    TMP=`echo $i | cut -d';' -f2`
+	    RATE_COUNT_DOWN=$[$RATE_COUNT_DOWN+$TMP]
+	else
+	    USERS_COUNT_DOWN=$[$USERS_COUNT_DOWN+1]
+	fi
+        if [ ! `echo $i | cut -d';' -f4` == "auto" ]; then
+            TMP=`echo $i | cut -d';' -f4`
+	    RATE_COUNT_UP=$[$RATE_COUNT_UP+$TMP]
+	else
+	    USERS_COUNT_UP=$[$USERS_COUNT_UP+1]
+        fi
+     done
+    
+    if [ ! "$USERS_COUNT_DOWN" == "0" ]; then
+	DOWNLOAD_USER_RATE=$[($DOWNLOAD_NORMAL-$DOWNLOAD_PRIO-$DOWNLOAD_ROUTER-$RATE_COUNT_DOWN)/$USERS_COUNT_DOWN]
+    fi
+    if [ ! "$USERS_COUNT_UP" == "0" ]; then
+	UPLOAD_USER_RATE=$[($UPLOAD_NORMAL-$UPLOAD_PRIO-$UPLOAD_ROUTER-$RATE_COUNT_UP)/$USERS_COUNT_UP]
+    fi
+
+# ------------ Creating queues - download ---------------
+### Root queue
+    tc qdisc add dev imq0 root handle 1:0 hfsc default 100
+    tc class add dev imq0 parent 1:0 classid 1:1 hfsc ls m2 ${DOWNLOAD_ALL}kbit ul m2 ${DOWNLOAD_ALL_UL}kbit
+
+### Critical traffic (fast)
+    tc class add dev imq0 parent 1:1 classid 1:2 hfsc rt m1 ${DOWNLOAD_CRIT_FAST_M1}kbit d 1s m2 ${DOWNLOAD_CRIT_FAST}kbit ls m2 ${DOWNLOAD_CRIT_FAST}kbit ul m2 ${DOWNLOAD_CRIT_FAST_UL}kbit
+    tc qdisc add dev imq0 parent 1:2 sfq perturb 5
+    tc filter add dev imq0 parent 1:0 protocol ip prio 3 handle 0x2 fw flowid 1:2
+
+### Critical traffic (data)
+    tc class add dev imq0 parent 1:1 classid 1:3 hfsc ls m2 ${DOWNLOAD_CRIT_DATA}kbit ul m2 ${DOWNLOAD_CRIT_DATA_UL}kbit
+    tc qdisc add dev imq0 parent 1:3 sfq perturb 10
+    tc filter add dev imq0 parent 1:0 protocol ip prio 2 handle 0x3 fw flowid 1:3
+
+### Normal traffic
+    tc class add dev imq0 parent 1:1 classid 1:5 hfsc ls m2 ${DOWNLOAD_NORMAL}kbit ul m2 ${DOWNLOAD_NORMAL_UL}kbit
+
+  # Priority traffic
+    tc class add dev imq0 parent 1:5 classid 1:10 hfsc ls m2 ${DOWNLOAD_PRIO}kbit ul m2 ${DOWNLOAD_NORMAL_UL}kbit
+    tc qdisc add dev imq0 parent 1:10 sfq perturb 5
+    tc filter add dev imq0 parent 1:0 protocol ip prio 4 u32 match ip protocol 1 0xff flowid 1:10				# ICMP
+    tc filter add dev imq0 parent 1:0 protocol ip prio 4 u32 match ip protocol 17 0xff match ip sport 53 0xffff flowid 1:10	# DNS
+    tc filter add dev imq0 parent 1:0 protocol ip prio 4 u32 match ip protocol 6 0xff \
+    match u8 0x05 0x0f at 0 match u16 0x0000 0xffc0 at 2 match u8 0x10 0xff at 33 flowid 1:10                                   # ACK
+
+  # Router traffic
+    tc class add dev imq0 parent 1:5 classid 1:20 hfsc ls m2 ${DOWNLOAD_ROUTER}kbit ul m2 ${DOWNLOAD_ROUTER_UL}kbit
+    tc qdisc add dev imq0 parent 1:20 sfq perturb 10
+    tc filter add dev imq0 parent 1:0 protocol ip prio 5 u32 match ip dst $INTERNET_IP flowid 1:20
+
+  # P2P traffic
+    if [ ! "$P2P_BAND" == "" ]; then
+	DOWNLOAD_P2P=`echo $P2P_BAND | cut -d';' -f1`
+	tc class add dev imq0 parent 1:5 classid 1:30 hfsc ls m2 ${DOWNLOAD_USER_RATE}kbit ul m2 ${DOWNLOAD_P2P}kbit
+	tc qdisc add dev imq0 parent 1:30 sfq perturb 10
+	tc filter add dev imq0 parent 1:0 protocol ip prio 1 handle 0x30 fw flowid 1:30
+    fi
+
+  # Users traffic
+    MARK=100
+    for i in `cat ${0%$START_FILE}rc.fire_qos | cut -d'#' -f1`
+    do
+    DOWN_NORMAL=$DOWNLOAD_USER_RATE
+    DOWN_CEIL=$DOWNLOAD_NORMAL_UL
+
+    ADDRESS=`echo $i | cut -d';' -f1`
+
+    if [ ! `echo $i | cut -d';' -f2` == "auto" ]; then
+	DOWN_NORMAL=`echo $i | cut -d';' -f2`
+    fi
+
+    if [ ! `echo $i | cut -d';' -f3` == "auto" ]; then
+	DOWN_CEIL=`echo $i | cut -d';' -f3`
+        DL="ul m2 ${DOWN_CEIL}kbit"
+    else
+	DL="ul m2 ${DOWN_CEIL}kbit"
+    fi
+
+    if [ $DOWN_NORMAL -ge $DOWN_CEIL ]; then
+	DOWN_NORMAL=$DOWN_CEIL
+    fi
+
+      tc class add dev imq0 parent 1:5 classid 1:${MARK} hfsc ls m2 ${DOWN_NORMAL}kbit $DL
+      tc qdisc add dev imq0 parent 1:${MARK} sfq perturb 10
+      tc filter add dev imq0 parent 1:0 protocol ip prio 6 u32 match ip dst $ADDRESS flowid 1:${MARK}
+      MARK=$[$MARK+1]
+    done
+
+# ------------- Creating queues - upload ----------------
+### Root queue
+    tc qdisc add dev imq1 root handle 1:0 hfsc default 100
+    tc class add dev imq1 parent 1:0 classid 1:1 hfsc ls m2 ${UPLOAD_ALL}kbit ul m2 ${UPLOAD_ALL_UL}kbit
+
+### Critical traffic (fast)
+    tc class add dev imq1 parent 1:1 classid 1:2 hfsc rt m1 ${UPLOAD_CRIT_FAST_M1}kbit d 1s m2 ${UPLOAD_CRIT_FAST}kbit ls m2 ${UPLOAD_CRIT_FAST}kbit ul m2 ${UPLOAD_CRIT_FAST_UL}kbit
+    tc qdisc add dev imq1 parent 1:2 sfq perturb 5
+    tc filter add dev imq1 parent 1:0 protocol ip prio 3 handle 0x2 fw flowid 1:2
+
+### Critical traffic (data)
+    tc class add dev imq1 parent 1:1 classid 1:3 hfsc ls m2 ${UPLOAD_CRIT_DATA}kbit ul m2 ${UPLOAD_CRIT_DATA_UL}kbit
+    tc qdisc add dev imq1 parent 1:3 sfq perturb 10
+    tc filter add dev imq1 parent 1:0 protocol ip prio 2 handle 0x3 fw flowid 1:3
+
+### Normal traffic
+    tc class add dev imq1 parent 1:1 classid 1:5 hfsc ls m2 ${UPLOAD_NORMAL}kbit ul m2 ${UPLOAD_NORMAL_UL}kbit
+
+  # Priority traffic
+    tc class add dev imq1 parent 1:5 classid 1:10 hfsc ls m2 ${UPLOAD_PRIO}kbit ul m2 ${UPLOAD_NORMAL_UL}kbit
+    tc qdisc add dev imq1 parent 1:10 sfq perturb 5
+    tc filter add dev imq1 parent 1:0 protocol ip prio 4 u32 match ip protocol 17 0xff match ip dport 53 0xffff flowid 1:10	# DNS
+    tc filter add dev imq1 parent 1:0 protocol ip prio 4 u32 match ip protocol 1 0xff flowid 1:10				# ICMP
+    tc filter add dev imq1 parent 1:0 protocol ip prio 4 u32 match ip protocol 6 0xff \
+    match u8 0x05 0x0f at 0 match u16 0x0000 0xffc0 at 2 match u8 0x10 0xff at 33 flowid 1:10 					# ACK
+
+  # Router traffic
+    tc class add dev imq1 parent 1:5 classid 1:20 hfsc ls m2 ${UPLOAD_ROUTER}kbit ul m2 ${UPLOAD_ROUTER_UL}kbit
+    tc qdisc add dev imq1 parent 1:20 sfq perturb 10
+    tc filter add dev imq1 parent 1:0 protocol ip prio 5 u32 match ip src $INTERNET_IP flowid 1:20
+
+  # P2P traffic
+    if [ ! "$P2P_BAND" == "" ]; then
+	UPLOAD_P2P=`echo $P2P_BAND | cut -d';' -f2`
+	tc class add dev imq1 parent 1:5 classid 1:30 hfsc ls m2 ${UPLOAD_USER_RATE}kbit ul m2 ${UPLOAD_P2P}kbit
+	tc qdisc add dev imq1 parent 1:30 sfq perturb 10
+	tc filter add dev imq1 parent 1:0 protocol ip prio 1 handle 0x30 fw flowid 1:30
+    fi
+
+  # Users traffic
+    MARK=100
+    for i in `cat ${0%$START_FILE}rc.fire_qos | cut -d'#' -f1`
+    do
+    UP_NORMAL=$UPLOAD_USER_RATE
+    UP_CEIL=$UPLOAD_NORMAL_UL
+
+    ADDRESS=`echo $i | cut -d';' -f1`
+
+    if [ ! `echo $i | cut -d';' -f4` == "auto" ]; then
+        UP_NORMAL=`echo $i | cut -d';' -f4`
+    fi
+
+    if [ ! `echo $i | cut -d';' -f5` == "auto" ]; then
+        UP_CEIL=`echo $i | cut -d';' -f5`
+        UL="ul m2 ${UP_CEIL}kbit"
+    else
+	UL="ul m2 ${UP_CEIL}kbit"
+    fi
+
+    if [ $UP_NORMAL -ge $UP_CEIL ]; then
+        UP_NORMAL=$UP_CEIL
+    fi
+
+      tc class add dev imq1 parent 1:5 classid 1:${MARK} hfsc ls m2 ${UP_NORMAL}kbit $UL
+      tc qdisc add dev imq1 parent 1:${MARK} sfq perturb 10
+      tc filter add dev imq1 parent 1:0 protocol ip prio 6 u32 match ip src $ADDRESS flowid 1:${MARK}
+      MARK=$[$MARK+1]
+    done
+}
+
+# -------------------- { start | stop } ----------------------
+case "$1" in
+    'start')
+        echo "Starting HFSC sharper $VERSION ... - All rights reserved for B@roo 2000-2011"
+	stop
+	start
+	;;
+    'stop')
+	echo "Stopping HFSC sharper $VERSION ... - All rights reserved for B@roo 2000-2011"
+	stop
+	;;
+    *)
+	echo -e "\n Usage: rc.hfsc { start | stop }"
+	;;
+esac

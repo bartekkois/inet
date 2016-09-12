@@ -1,0 +1,46 @@
+#!/bin/sh
+# ----------------- "rc.fire_conf" ------------------
+#    All rights reserved for B@roo 2000-2011
+# ---------------------------------------------------
+
+# Security
+ BOGON_FILTERING="yes"							# yes, (nothing)
+ HATEHOSTS=""								# 198.204.152.34
+ HATEPORTS="yes"							# yes, (nothing)
+ MAC_PROTECT=""								# yes, internet, (nothing)
+ SPAM_RELAY=""								# 10.0.1.0/24;127.0.0.1;9199, (nothing)
+ SPAM_CHECK="10.0.1.0/24"						# 10.0.1.0/24, (nothing)
+ SPAM_CHECK_TIME="60"							# 60
+ SPAM_CHECK_HITCOUNT="10"						# 10
+ TTL_CHANGE=""								# 10.0.1.0/24;255
+ LOGS=""								# 10.0.1.0/24
+
+# Local interfaces
+ DHCP_ALLOW="eth1 eth2"							# eth1
+ BASIC_FORWARD="10.0.1.0/24;10.0.10.0/24 10.1.0.0/16;10.0.1.0/24" 	# 10.0.1.0/24;10.0.2.0/24
+
+# Internet sharing
+ NAT_ENABLE="yes"							# yes, (nothing), MASQUERADE
+ INTERNET_ETH="eth0"							# ppp0
+ INTERNET_IP="83.16.51.206"						# 80.49.23.90
+
+ NAT_COUNTER_ACCOUNT="all;10.0.0.0/16"					# all:10.0.0.0/16
+
+ PROXY_IP=""								# 10.0.1.3;8080, REDIRECT;3128
+ REDIRECT=""								# 10.0.1.0/24;194.204.152.34;10.0.1.2;53;udp
+
+# QoS
+ DOWNLOAD="980"								# 1024 (kbit)
+ UPLOAD="235"								# 256 (kbit)
+
+ QOS_CRIT_FAST_BAND="80;50;soft"					# down_rate;up_rate;hard/soft (kbit)
+ QOS_CRIT_DATA_BAND="50;20;soft" 					# down_rate;up_rate;hard/soft (kbit)
+ QOS_PRIO_BAND="40;15"							# down_rate;up_rate (kbit)
+ QOS_ROUTER_BAND="20;auto;20;auto"					# down_rate;down_ceil;up_rate;up_ceil (kbit)
+
+# P2P
+ P2P_DENY=""								# 10.0.1.0/24 (drop p2p traffic)
+ P2P_BAND="800;190"							# down_rate:up_rate (limit p2p traffic)
+
+ P2P_PROTOCOLS_DENY="applejuice ares directconnect edonkey fasttrack gnutella imesh openft mute"
+ P2P_PROTOCOLS_BAND="bittorrent"

@@ -1,0 +1,198 @@
+#!/bin/sh
+# ---------------- INET1 "rc.inet1" -------------------
+#       All rights reserved for B@roo 2000-2011
+# -----------------------------------------------------
+#set -x
+
+VERSION="2.9.9v"
+
+# --------------------- Configuration -----------------
+# Interfaces
+ ETH0_IP="83.16.51.206"
+ ETH0_NETMASK="255.255.255.252"
+ ETH0_SUBINTERFACES=""
+ ETH0_PROXY_ARP=""
+
+ ETH1_IP="10.0.1.1"
+ ETH1_NETMASK="255.255.255.0"
+ ETH1_SUBINTERFACES=""
+ ETH1_PROXY_ARP=""
+
+ ETH2_IP="10.0.2.1"
+ ETH2_NETMASK="255.255.255.0"
+ ETH2_SUBINTERFACES=""
+ ETH2_PROXY_ARP=""
+
+# Proxy arp forwarding
+ PROXY_ARP_LAN=""
+ PROXY_ARP_WAN_IP=""
+ PROXY_ARP_WAN_NET=""
+ PROXY_ARP_ADDRESS=""
+ PROXY_ARP_ALLOW_NETWORKS=""	# 192.168.100.0/24 10.0.100.0/24
+
+# Default gateway:
+ GATEWAY="83.16.51.205"
+
+# ------------------ Set up interfaces ----------------
+function interfaces() {
+if [ ! "$ETH0_IP" == "" ]; then
+    # Set up the ethernet card:
+	echo "Configuring eth0:"
+	echo "ifconfig eth0 $ETH0_IP netmask $ETH0_NETMASK"
+	ifconfig eth0 $ETH0_IP netmask $ETH0_NETMASK
+
+	for i in $ETH0_SUBINTERFACES
+	do
+	    IF=`echo $i | cut -d';' -f1`
+	    IP=`echo $i | cut -d';' -f2`
+	    echo "ifconfig eth0:${IF} $IP netmask $ETH0_NETMASK"
+	    ifconfig eth0:${IF} $IP netmask $ETH0_NETMASK
+	done
+	
+    # Enable proxy arp
+	if [ ! "$ETH0_PROXY_ARP" == "" ]; then
+	    echo 1 > /proc/sys/net/ipv4/conf/eth0/proxy_arp
+	fi
+    # If that didn't succeed, give some hints:
+        if [ ! $? = 0 ]; then
+            echo "Your eth0 card was not initialized properly."
+        fi
+fi
+
+if [ ! "$ETH1_IP" == "" ]; then
+    # Set up the ethernet card:
+        echo "Configuring eth1:"
+        echo "ifconfig eth1 $ETH1_IP netmask $ETH1_NETMASK"
+        ifconfig eth1 $ETH1_IP netmask $ETH1_NETMASK
+
+        for i in $ETH1_SUBINTERFACES
+        do
+            IF=`echo $i | cut -d';' -f1`
+            IP=`echo $i | cut -d';' -f2`
+            echo "ifconfig eth1:${IF} $IP netmask $ETH1_NETMASK"
+            ifconfig eth1:${IF} $IP netmask $ETH1_NETMASK
+        done
+
+    # Enable proxy arp
+        if [ ! "$ETH1_PROXY_ARP" == "" ]; then
+            echo 1 > /proc/sys/net/ipv4/conf/eth1/proxy_arp
+        fi
+
+    # If that didn't succeed, give some hints:
+        if [ ! $? = 0 ]; then
+            echo "Your eth1 card was not initialized properly."
+        fi
+fi
+
+if [ ! "$ETH2_IP" == "" ]; then
+    # Set up the ethernet card:
+        echo "Configuring eth2:"
+        echo "ifconfig eth2 $ETH2_IP netmask $ETH2_NETMASK"
+        ifconfig eth2 $ETH2_IP netmask $ETH2_NETMASK
+
+        for i in $ETH2_SUBINTERFACES
+        do
+            IF=`echo $i | cut -d';' -f1`
+	    IP=`echo $i | cut -d';' -f2`
+	    echo "ifconfig eth2:${IF} $IP netmask $ETH2_NETMASK"
+	    ifconfig eth2:${IF} $IP netmask $ETH2_NETMASK
+	done
+
+    # Enable proxy arp
+	if [ ! "$ETH2_PROXY_ARP" == "" ]; then
+            echo 1 > /proc/sys/net/ipv4/conf/eth2/proxy_arp
+        fi
+
+    # If that didn't succeed, give some hints:
+        if [ ! $? = 0 ]; then
+            echo "Your eth2 card was not initialized properly."
+        fi
+fi
+}
+
+# ------------- Proxy arp configuration ---------------
+function proxy_arp() {
+echo "Configuring proxy arp:"
+if [ ! "$PROXY_ARP_LAN" == "" ]; then
+    # Add router ip address on internal interface
+    echo "ip a a $PROXY_ARP_WAN_IP dev $PROXY_ARP_LAN"
+    ip a a $PROXY_ARP_WAN_IP dev $PROXY_ARP_LAN
+
+    # Delete route on internel interface
+    echo "ip route delete $PROXY_ARP_WAN_NET dev $PROXY_ARP_LAN"
+    ip route delete $PROXY_ARP_WAN_NET dev $PROXY_ARP_LAN
+
+    for i in $PROXY_ARP_ADDRESS
+    do
+	echo "ip route add $i dev $PROXY_ARP_LAN"
+	ip route add $i dev $PROXY_ARP_LAN
+    done
+    
+    # Filter unwanted ARP traffic
+    if [ ! "$PROXY_ARP_ALLOW_NETWORKS" == "" ]; then
+	arptables -F INPUT 
+	arptables -Z INPUT
+
+	for i in $PROXY_ARP_ALLOW_NETWORKS
+	do
+	    arptables -A INPUT -i $PROXY_ARP_LAN -s $i -j ACCEPT
+	done
+
+	arptables -A INPUT -i $PROXY_ARP_LAN -j DROP
+    fi
+fi
+}
+
+# ------------ Set up the loopback interface --------------
+function loopback() {
+echo "Configuring loopback interface:"
+    echo "ifconfig lo 127.0.0.1"
+    ifconfig lo 127.0.0.1
+    echo "route add -net 127.0.0.0 netmask 255.0.0.0 lo"
+    route add -net 127.0.0.0 netmask 255.0.0.0 lo
+}
+
+# ----------------- Set up the gateway --------------------
+function gateway() {
+echo "Configuring gateway:"
+if [ ! "$GATEWAY" = "127.0.0.1" -a ! "$GATEWAY" = "" ]; then
+    for i in $GATEWAY 
+    do
+	echo "route add default gw ${i} metric 1"
+	route add default gw ${i} metric 1
+    done
+fi
+}
+
+# --------------------- Stop interfaces --------------------
+function stop() {
+    if [ ! "$ETH0_IP" == "" ]; then
+	ifconfig eth0 down
+    fi
+
+    if [ ! "$ETH1_IP" == "" ]; then
+	ifconfig eth1 down
+    fi
+
+    if [ ! "$ETH2_IP" == "" ]; then
+	ifconfig eth2 down
+    fi
+}
+
+# ------------- { start | stop | temp } ---------------
+case "$1" in
+    'start')
+            echo "Starting interfaces configuration $VERSION ... - All rights reserved for B@roo 2000-2011"
+            interfaces
+	    proxy_arp
+	    loopback
+	    gateway
+            ;;
+    'stop')
+            echo "Starting interfaces configuration $VERSION ... - All rights reserved for B@roo 2000-2011"
+	    stop
+	    ;;
+	*)
+	    echo "\n Usage: ./rc.inet1 {start | stop }"
+	    ;;
+esac

@@ -1,0 +1,133 @@
+#!/bin/bash
+# ------------------ rc.status "rc.status" ----------------
+#         All rights reserved for B@roo 2000-2011
+# ---------------------------------------------------------
+#set -x
+
+VERSION="2.9.9v"
+
+# Configuration loading
+  if [ ! -e ${0%rc.status}rc.fire_conf ]; then
+    exit 1
+  fi
+    START_FILE="rc.status"
+    source ${0%rc.status}rc.fire_conf
+
+# --------------------- Show counters -----------------------
+counters()
+{
+    echo " === Traffic counters === "
+    
+    LIST_NAME=""
+    
+    for i in `cat ${0%$START_FILE}rc.fire_count | cut -d '#' -f1`
+    do
+	# Check for 'table' name
+	if [ ! `echo $i | grep table` == "" ]; then
+	    TABLE_NAME=`echo $i | cut -d';' -f2`
+	    
+	    echo " "
+	    echo " === Table: $TABLE_NAME "
+	    printf " %-20s %-25s %14s %14s \n" 'IP' 'HOST' 'DOWNLOAD' 'UPLOAD'
+	else
+	
+	    # Parse table
+	    IP_RECORD=`iptaccount -l $TABLE_NAME | grep " $i "`
+
+	    # Resolve name
+	    NAME=`cat /etc/hosts | grep "$i\s" | awk '{ print $2}'`
+
+	    if [ ! $NAME == "" ]; then
+		NAME_STRING="$NAME"
+	    else
+		NAME_STRING="---"
+	    fi
+	    
+	    if [ -n "$IP_RECORD" ]; then
+		
+		DOWNLOAD=`echo $IP_RECORD | cut -d ' ' -f7`
+	    
+		if [ $DOWNLOAD -gt $[1024*1024*1024] ]; then
+		    DOWNLOAD_RESULT=`echo "scale=2;$DOWNLOAD/1024/1024/1024" | bc`
+		    DOWNLOAD_STRING=`echo ${DOWNLOAD_RESULT}GB`
+		elif [ $DOWNLOAD -gt $[1024*1024] ]; then
+		    DOWNLOAD_RESULT=`echo "scale=2;$DOWNLOAD/1024/1024" | bc`
+		    DOWNLOAD_STRING=`echo ${DOWNLOAD_RESULT}MB`
+                elif [ $DOWNLOAD -gt 1024 ]; then
+                    DOWNLOAD_RESULT=`echo "scale=2;$DOWNLOAD/1024" | bc`
+                    DOWNLOAD_STRING=`echo ${DOWNLOAD_RESULT}KB`
+		elif [ $DOWNLOAD -gt 1 ]; then
+		    DOWNLOAD_RESULT=`echo "scale=2;$DOWNLOAD/1" | bc`
+		    DOWNLOAD_STRING=`echo ${DOWNLOAD_RESULT}B`
+		else
+		    DOWNLOAD_STRING="0.00B"
+		fi
+
+		UPLOAD=`echo $IP_RECORD | cut -d ' ' -f12`
+
+                if [ $UPLOAD -gt $[1024*1024*1024] ]; then
+                    UPLOAD_RESULT=`echo "scale=2;$UPLOAD/1024/1024/1024" | bc`
+                    UPLOAD_STRING=`echo ${UPLOAD_RESULT}GB`
+                elif [ $UPLOAD -gt $[1024*1024] ]; then
+                    UPLOAD_RESULT=`echo "scale=2;$UPLOAD/1024/1024" | bc`
+                    UPLOAD_STRING=`echo ${UPLOAD_RESULT}MB`
+                elif [ $UPLOAD -gt 1024 ]; then
+                    UPLOAD_RESULT=`echo "scale=2;$UPLOAD/1024" | bc`
+                    UPLOAD_STRING=`echo ${UPLOAD_RESULT}KB`
+                elif [ $UPLOAD -gt 1 ]; then
+            	    UPLOAD_RESULT=`echo "scale=2;$UPLOAD/1" | bc`
+	            UPLOAD_STRING=`echo ${UPLOAD_RESULT}B`
+	        else
+	    	    UPLOAD_STRING="0.00B"
+                fi
+
+		printf " %-20s %-25s %14s %14s \n" $i $NAME_STRING $DOWNLOAD_STRING $UPLOAD_STRING
+            else
+                printf " %-20s %-25s %14s %14s \n" $i $NAME_STRING 0.00B 0.00B
+	    fi                                            
+	fi
+    done
+    echo " "
+}
+
+# -------------------- Show qos-status -----------------------
+status()
+{
+    echo "imq0 interface classes"
+    echo "================================"
+    tc class show dev imq0 | grep root
+    tc class show dev imq0 | grep -v root | sort | nl
+
+    echo "imq1 interface classes"
+    echo "==================================="
+    tc class show dev imq1 | grep root
+    tc class show dev imq1 | grep -v root | sort | nl
+}
+
+# -------------------- Show qos-state ------------------------
+state()
+{
+    echo "imq0 interface classes counters"
+    echo "================================"
+    tc -s -d class show dev imq0
+
+    echo "imq1 interface classes counters"
+    echo "================================"
+    tc -s -d class show dev imq1
+}
+
+# -------- { counters | qos-status | qos-state } ------------
+case "$1" in
+    'counters')
+	counters
+	;;
+    'qos-state')
+	state
+	;;
+    'qos-status')
+	status
+        ;;
+    *)
+	counters
+	;;
+esac
